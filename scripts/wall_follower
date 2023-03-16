@@ -1,0 +1,157 @@
+#!/usr/bin/env python3
+
+import math
+import numpy as np
+import random
+import sys
+import time
+import rospy
+from geometry_msgs.msg import Twist
+from nav_msgs.msg import Odometry
+from sensor_msgs.msg import LaserScan
+from rospy.exceptions import ROSInterruptException
+
+def update_command_vel(linear_vel, angular_vel):
+    msg = Twist()
+    msg.linear.x = linear_vel
+    msg.angular.z = angular_vel
+    glob_cmd_vel_pub.publish(msg)
+
+def odom_callback(msg):
+    global glob_linear_x_vel
+    global glob_travel_distance
+    global glob_prev_travel_distance
+
+    dt = 0.02
+    current_linear_x_vel = msg.twist.twist.linear.x
+    current_angular_z_vel = msg.twist.twist.angular.z
+
+    current_distance = current_linear_x_vel*dt
+    #print(current_distance)
+    glob_travel_distance = glob_travel_distance + current_distance
+    #print(glob_travel_distance)
+    glob_prev_travel_distance = glob_linear_x_vel
+    #print(".")
+
+def scan_callback(msg):
+    scan_max_value = msg.range_max
+    # print(len(msg.ranges))
+    # print(msg.ranges[750])
+    right = msg.ranges[3150]
+    left = msg.ranges[450]
+
+    stop_max_range = 3.0
+    stop_min_range = 0.01
+
+    stop_zone_left = np.array(msg.ranges[0:450]) # [0:300]
+    # print(len(stop_zone_left))
+    # print(stop_zone_left)
+
+    stop_zone_left_clipped = np.clip(stop_zone_left,stop_min_range,stop_max_range)
+    #print(len(stop_zone_left_clipped))
+    #print(stop_zone_left_clipped)
+    #print(np.mean(stop_zone_left_clipped))
+    
+    stop_zone_right = np.array(msg.ranges[3408:3585]) #[3408:3585]
+    # print(len(stop_zone_right))
+    # print(stop_zone_right)
+
+    stop_zone_right_clipped = np.clip(stop_zone_right,stop_min_range,stop_max_range)
+    #print(len(stop_zone_right_clipped))
+    # print(np.mean(stop_zone_right_clipped))
+
+    # stop_zone_clipped = (stop_zone_left_clipped + stop_zone_right_clipped)
+    # stop_zone_clipped = np.concatenate(stop_zone_left_clipped, stop_zone_right_clipped)
+    stop_zone_clipped = np.hstack((stop_zone_left_clipped, stop_zone_right_clipped))
+    #print(len(stop_zone_clipped))
+    #print(stop_zone_clipped)
+    stop_zone_avr = np.mean(stop_zone_clipped)
+    #print(stop_zone_avr)
+
+    vel_max_scale = 1.0
+    vel_rate = vel_max_scale / (stop_max_range - stop_min_range)
+    #print(vel_rate)
+    vel_scale = stop_zone_avr * vel_rate
+    #print(vel_scale)
+
+    # stop_zone_avr = np.mean(stop_zone)
+    # print(stop_zone_avr)
+    
+    #print("---------------------")
+
+    right_offset = 0.0 # 2.2 # abitally value
+    left_offset = 1.2 # abitally value
+
+    error = (left+left_offset) - (right+right_offset)
+    # left = msg.ranges[2251]
+    # right = msg.ranges[750]
+    # left = msg.ranges[2251]
+    # right = msg.ranges[375]
+    # left = msg.ranges[1125]
+    # error = left - right
+    # kp = 0.6
+    kp = 0.4
+    # print(error)
+
+    if error > 0.3:
+        error = 0.3
+    elif error < -0.3:
+        error = -0.3
+    else:
+        error = error
+
+    lin_vel_max = 0.4
+    ang_vel_max = lin_vel_max * 2
+    ang_vel = kp*error
+    
+    if ang_vel > ang_vel_max:
+        ang_vel = ang_vel_max
+    elif ang_vel < -ang_vel_max:
+        ang_vel = -ang_vel_max
+    else:
+        ang_vel = ang_vel
+
+    # print(ang_vel)
+    
+    distance_to_travel = 60.10 # [m]
+    obstacle_stop_distance = 0.7 # [m]
+
+    if vel_scale < obstacle_stop_distance:
+        vel_scale = 0
+        print('!!! STOP !!!')
+        update_command_vel(0, 0)
+    else:
+        vel_scale = vel_scale
+        if glob_travel_distance >= distance_to_travel:
+            print('!!! Arrived !!!')
+            update_command_vel(0, 0)
+            # TODO
+            print('!!! Stop and Kill this node !!!')
+        else:
+            print('!!! GO GO GO !!!', glob_travel_distance)
+            update_command_vel(vel_scale*lin_vel_max, vel_scale*ang_vel)
+
+
+if __name__ == '__main__':
+    try:
+
+        glob_linear_x_vel = 0.0
+        glob_travel_distance = 0.0
+        glob_prev_travel_distance = 0.0
+
+        rospy.init_node('wall_follower')
+        glob_scan_sub = rospy.Subscriber('/scan_f_raw', LaserScan, scan_callback)
+        glob_odom_sub = rospy.Subscriber('/odom', Odometry, odom_callback)
+
+        glob_cmd_vel_pub = rospy.Publisher('/cmd_vel', Twist, queue_size=1)
+
+        rate = rospy.Rate(20)
+
+        while not rospy.is_shutdown():
+            #print("Global Linear x vel")
+            #print(glob_linear_x_vel)
+            #print("")
+            rate.sleep()
+
+    except ROSInterruptException:
+        print('Finished')

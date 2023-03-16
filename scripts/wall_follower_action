@@ -1,0 +1,372 @@
+#! /usr/bin/env python
+
+import rospy
+import actionlib
+from matrix_msgs.msg import RobotMode, WallFollowingAction, WallFollowingGoal, WallFollowingFeedback, WallFollowingResult
+from sensor_msgs.msg import LaserScan
+from geometry_msgs.msg import Twist
+from nav_msgs.msg import Odometry
+from rospy.exceptions import ROSInterruptException
+from enum import Enum
+
+import math
+import numpy as np
+import random
+import sys
+import time
+
+class Sequence(Enum):
+    INIT=0,
+    DATA_CHECKING=1,
+    INIT_PARAM=2,
+    WALL_TRACKING=3,
+    FINISH=4,
+    PAUSE=5,
+    ERROR=6
+
+
+class ActionServer():
+
+    def __init__(self):
+        self.sub_LaserScan = rospy.Subscriber('/scan_f_raw', LaserScan, self.scan_callback)
+        self.sub_Odom = rospy.Subscriber('/odom', Odometry, self.odom_callback)
+        self.sub_RobotMode = rospy.Subscriber('/matrix_mode_controller/mode', RobotMode, self.mode_callback)   
+        self.pub_cmd_vel = rospy.Publisher('/cmd_vel', Twist, queue_size=1)
+
+
+        self.glob_linear_x_vel = 0.0
+        self.glob_travel_distance = 0.0
+        self.glob_prev_travel_distance = 0.0
+        self.timestmp_begin = 0.0
+        self.timestmp_old = 0.0
+        self.total_time = 0.0
+        self.timer_counter = 0.0
+        self.current_robotmode = 0
+
+        self.msg = LaserScan()
+
+        self.a_server = actionlib.SimpleActionServer(
+            "matrix_wall_following_operation", WallFollowingAction, execute_cb=self.execute_cb, auto_start=False)
+        self.a_server.start()
+
+    
+    def mode_callback(self, msg):
+        self.current_robotmode = msg.robot_mode
+
+    
+    def odom_callback(self, msg):
+        dt = 0.02
+        current_linear_x_vel = msg.twist.twist.linear.x
+        current_angular_z_vel = msg.twist.twist.angular.z
+
+        current_distance = current_linear_x_vel*dt
+        #print(current_distance)
+        self.glob_travel_distance = self.glob_travel_distance + current_distance
+        #print(self.glob_travel_distance)
+        #self.glob_prev_travel_distance = self.glob_linear_x_vel
+        #print(".")
+    
+    def scan_callback(self, raw_msg):
+        self.msg = raw_msg
+    
+    def update_command_vel(self, linear_vel, angular_vel):
+        msg = Twist()
+        msg.linear.x = linear_vel
+        msg.angular.z = angular_vel
+        self.pub_cmd_vel.publish(msg)
+
+    def execute_cb(self, goal):
+
+        success = True
+        finish = False
+
+        feedback = WallFollowingFeedback()
+        result = WallFollowingResult()
+        rate = rospy.Rate(10)
+
+        sequence = Sequence.INIT.value
+        text=""
+        timeout= 0
+        total_time = 0
+
+        task_result = WallFollowingResult.SUCCESS
+
+
+        period_state = 0
+        period_text = ""
+        period_timeout_coutdown = 0
+        setTimeOut = 0
+
+        self.glob_travel_distance = 0.0
+        
+
+
+        while not finish:
+            # print(text)
+            if self.a_server.is_preempt_requested():
+                rospy.logwarn("Preemting !!!!!")
+                
+                success = False
+                finish = True
+
+                result.result = WallFollowingResult.PREEMTING
+                result.sequence = feedback.sequence
+                result.text = "preemting"
+
+                result.travel_dist = feedback.current_travel_dist
+                result.total_time = feedback.total_time
+
+                self.a_server.set_preempted(result)
+
+
+                break
+
+            if sequence == Sequence.INIT.value:
+                text = "INIT"
+                # print("[seq]--> current order target process: " + str(i))
+                # print("x: " + str(goal.target[i].pose.position.x))
+                # print("y: " + str(goal.target[i].pose.position.y))
+                # print("heading w : " + str(goal.target[i].pose.orientation.w))
+                sequence = Sequence.DATA_CHECKING.value
+                # break
+            
+            elif sequence == Sequence.DATA_CHECKING.value:
+                text="DATA_CHECKING"
+                # if len(self.msg.ranges) == goal.num_lidar_data:
+                #     sequence = Sequence.INIT_PARAM.value
+                # else:
+                #     text = text + "Data missmatch"
+                #     task_result = WallFollowingResult.NUM_DATA_MISSMATCH
+                #     sequence = Sequence.ERROR.value
+                sequence = Sequence.INIT_PARAM.value
+                # break
+
+            elif sequence == Sequence.INIT_PARAM.value:
+                text="INIT_PARAM"
+                self.timestmp_begin = rospy.get_rostime().secs
+                setTimeOut = rospy.get_rostime().secs + goal.timeout
+                sequence = Sequence.WALL_TRACKING.value
+                # break
+
+            elif sequence == Sequence.WALL_TRACKING.value:
+                text = "WALL_TRACKING"
+
+                # --------------------------------------------------------------------------------------#
+                #
+                #
+                #                           Wall Following Control Begin
+                #
+                #---------------------------------------------------------------------------------------#
+                # lidar_data = rospy.wait_for_message('/scan_f_raw', LaserScan, timeout=1)
+                # self.msg = lidar_data
+                right = self.msg.ranges[3150]
+                left = self.msg.ranges[450]
+
+                stop_max_range = 3.0
+                stop_min_range = 0.01
+
+                stop_zone_left = np.array(self.msg.ranges[0:450]) # [0:300]
+                # print(len(stop_zone_left))
+                # print(stop_zone_left)
+
+                stop_zone_left_clipped = np.clip(stop_zone_left,stop_min_range,stop_max_range)
+                #print(len(stop_zone_left_clipped))
+                #print(stop_zone_left_clipped)
+                #print(np.mean(stop_zone_left_clipped))
+                
+                stop_zone_right = np.array(self.msg.ranges[3408:3585]) #[3408:3585]
+                # print(len(stop_zone_right))
+                # print(stop_zone_right)
+
+                stop_zone_right_clipped = np.clip(stop_zone_right,stop_min_range,stop_max_range)
+                #print(len(stop_zone_right_clipped))
+                # print(np.mean(stop_zone_right_clipped))
+
+                # stop_zone_clipped = (stop_zone_left_clipped + stop_zone_right_clipped)
+                # stop_zone_clipped = np.concatenate(stop_zone_left_clipped, stop_zone_right_clipped)
+                stop_zone_clipped = np.hstack((stop_zone_left_clipped, stop_zone_right_clipped))
+                #print(len(stop_zone_clipped))
+                #print(stop_zone_clipped)
+                stop_zone_avr = np.mean(stop_zone_clipped)
+                #print(stop_zone_avr)
+
+                vel_max_scale = 1.0
+                vel_rate = vel_max_scale / (stop_max_range - stop_min_range)
+                #print(vel_rate)
+                vel_scale = stop_zone_avr * vel_rate
+                #print(vel_scale)
+
+                # stop_zone_avr = np.mean(stop_zone)
+                # print(stop_zone_avr)
+                
+                #print("---------------------")
+
+                right_offset = 0.0 # 2.2 # abitally value
+                left_offset = 1.2 # abitally value
+
+                error = (left+left_offset) - (right+right_offset)
+                # left = msg.ranges[2251]
+                # right = msg.ranges[750]
+                # left = msg.ranges[2251]
+                # right = msg.ranges[375]
+                # left = msg.ranges[1125]
+                # error = left - right
+                # kp = 0.6
+                kp = 0.4
+                # print(error)
+
+                if error > 0.3:
+                    error = 0.3
+                elif error < -0.3:
+                    error = -0.3
+                else:
+                    error = error
+
+                lin_vel_max = 0.5
+                ang_vel_max = lin_vel_max * 2
+                ang_vel = kp*error
+                
+                if ang_vel > ang_vel_max:
+                    ang_vel = ang_vel_max
+                elif ang_vel < -ang_vel_max:
+                    ang_vel = -ang_vel_max
+                else:
+                    ang_vel = ang_vel
+
+                # print(ang_vel)
+                
+                distance_to_travel = goal.travel_dist
+                obstacle_stop_distance = goal.obstacle_stop_dist
+
+                # distance_to_travel = 60.10 # [m]
+                # obstacle_stop_distance = 0.7 # [m]
+
+                
+
+                if vel_scale < obstacle_stop_distance:
+                    vel_scale = 0
+                    print('!!! STOP !!!')
+                    self.update_command_vel(0, 0)
+                else:
+                    vel_scale = vel_scale
+                    if self.glob_travel_distance >= distance_to_travel:
+                        self.update_command_vel(0, 0)
+                        print('!!! Arrived !!!', self.glob_travel_distance)
+                        # TODO
+                        #print('!!! Stop and Kill this node !!!')
+                        text = "Arrived Destination"
+                        task_result = WallFollowingResult.SUCCESS
+                        success = True
+                        sequence = Sequence.FINISH.value
+                    else:
+                        #print('!!! GO GO GO !!!', self.glob_travel_distance)
+                        self.update_command_vel(vel_scale*lin_vel_max, vel_scale*ang_vel)
+
+
+                #------------ TIMEOUT CHECKING -----------#
+                self.timer_counter = rospy.get_rostime().secs - self.timestmp_begin
+                total_time = self.timer_counter
+                
+                if goal.timeout != WallFollowingGoal.IGNORE_PARAMETER:
+                    timeout = setTimeOut - rospy.get_rostime().secs
+                    rospy.loginfo("[matrix_wall_folloing_operation]:Check timeout countdown " + str(timeout))
+                    if rospy.get_rostime().secs > setTimeOut:
+                        text = text + "Timeout"
+                        task_result = WallFollowingResult.TIME_OUT
+                        sequence = Sequence.ERROR.value
+                        rospy.logerr(text)
+                    else:
+                        pass
+                else:
+                    timeout = WallFollowingGoal.IGNORE_PARAMETER
+                    # rospy.loginfo("no timeout")
+                
+                # --------------------------------------------------------------------------------------#
+                #
+                #
+                #                           Wall Following Control END
+                #
+                #---------------------------------------------------------------------------------------#
+
+                        
+                # timeout = goal.timeout - total_time
+                
+                # if goal.timeout != WallfollowingGoal.IGNORE_PARAMETER:
+                #     if timeout > goal.timeout:
+                #         text = "Timeout"
+                #         task_result = WallFollowingResult.TIME_OUT
+                #         sequence = Sequence.ERROR.value
+                #     else:
+                #         pass
+
+
+            elif sequence == Sequence.ERROR.value:
+                self.update_command_vel(0, 0)
+                success = True
+                sequence = Sequence.FINISH.value
+            
+            elif sequence == Sequence.PAUSE.value:
+                if self.current_robotmode != RobotMode.PAUSE:
+                    sequence = period_state
+                    text = period_text
+                    period_text = ""
+                    setTimeOut = rospy.get_rostime().secs + period_timeout_coutdown
+                else:
+                    pass
+                # break
+
+            elif sequence == Sequence.FINISH.value:
+                text = "FINISH"
+                finish = True
+                success = True
+                # break
+                
+            else:
+                break
+            
+            #//**********************************************************//
+            #//                                                          //
+            #//                      check pause state                   //
+            #//                                                          //
+            #//**********************************************************//
+            if self.current_robotmode == RobotMode.PAUSE and sequence != Sequence.PAUSE.value:
+                period_state = sequence
+                period_text = text
+                sequence = Sequence.PAUSE.value
+                period_timeout_coutdown = setTimeOut - rospy.get_rostime().secs
+                text = period_text + "  [Pausing_mode]"
+            else:
+                pass
+            
+            
+            # feedback.sequence = sequence
+            feedback.text = text
+            feedback.current_travel_dist = self.glob_travel_distance
+            feedback.total_time = total_time
+            feedback.timeout = timeout
+            self.a_server.publish_feedback(feedback)
+            print("")
+
+            rate.sleep()
+
+        print("")
+        print("")
+        print("")
+
+        result.result = task_result
+        result.sequence = feedback.sequence
+        result.text = feedback.text
+
+        result.travel_dist = feedback.current_travel_dist
+        result.total_time = feedback.total_time
+
+        print(success)
+        if success == True:
+            self.a_server.set_succeeded(result)
+        else:
+            pass
+
+if __name__ == "__main__":
+    rospy.init_node("action_server")
+    s = ActionServer()
+    rospy.spin()

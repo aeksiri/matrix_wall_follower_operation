@@ -1,0 +1,28 @@
+int32 IGNORE_PARAMETER = -1 
+
+float64 travel_dist
+float64 obstacle_stop_dist
+int64 num_lidar_data
+int32 timeout
+
+---------
+int8 SUCCESS = 0
+int8 TIME_OUT = 1
+int8 NUM_DATA_MISSMATCH = 2
+int8 PREEMTING = 99
+
+int8 result
+string text
+uint8 sequence
+
+float64 travel_dist 
+int64 total_time
+
+---------
+
+int8 sequence 
+string text
+int64 timeout
+
+float64 current_travel_dist
+int64 total_time
