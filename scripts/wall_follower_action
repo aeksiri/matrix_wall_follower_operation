@@ -201,8 +201,8 @@ class ActionServer():
                 
                 #print("---------------------")
 
-                right_offset = 0.0 # 2.2 # abitally value
-                left_offset = 1.2 # abitally value
+                right_offset = goal.right_offset #0.0 # 2.2 # abitally value
+                left_offset = goal.left_offset #1.2 # abitally value
 
                 error = (left+left_offset) - (right+right_offset)
                 # left = msg.ranges[2251]
