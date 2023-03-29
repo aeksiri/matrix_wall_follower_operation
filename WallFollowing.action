@@ -2,6 +2,8 @@ int32 IGNORE_PARAMETER = -1
 
 float64 travel_dist
 float64 obstacle_stop_dist
+float64 right_offset
+float64 left_offset
 int64 num_lidar_data
 int32 timeout
 
