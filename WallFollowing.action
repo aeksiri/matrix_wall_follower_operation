@@ -1,5 +1,6 @@
 int32 IGNORE_PARAMETER = -1 
 
+float64 lin_vel_max
 float64 travel_dist
 float64 obstacle_stop_dist
 float64 right_offset
