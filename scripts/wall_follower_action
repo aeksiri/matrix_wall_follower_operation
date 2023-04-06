@@ -222,7 +222,7 @@ class ActionServer():
                 else:
                     error = error
 
-                lin_vel_max = 0.5
+                lin_vel_max = goal.lin_vel_max #0.5
                 ang_vel_max = lin_vel_max * 2
                 ang_vel = kp*error
                 
