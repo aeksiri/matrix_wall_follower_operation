@@ -28,7 +28,8 @@ class Sequence(Enum):
 class ActionServer():
 
     def __init__(self):
-        self.sub_LaserScan = rospy.Subscriber('/scan_f_raw', LaserScan, self.scan_callback)
+        self.sub_LaserScan = rospy.Subscriber('/scan_f_raw', LaserScan, self.scan_callback) #RT059
+        # self.sub_LaserScan = rospy.Subscriber('/scan', LaserScan, self.scan_callback) #SDR100
         self.sub_Odom = rospy.Subscriber('/odom', Odometry, self.odom_callback)
         self.sub_RobotMode = rospy.Subscriber('/matrix_mode_controller/mode', RobotMode, self.mode_callback)   
         self.pub_cmd_vel = rospy.Publisher('/cmd_vel', Twist, queue_size=1)
@@ -159,13 +160,17 @@ class ActionServer():
                 #---------------------------------------------------------------------------------------#
                 # lidar_data = rospy.wait_for_message('/scan_f_raw', LaserScan, timeout=1)
                 # self.msg = lidar_data
-                right = self.msg.ranges[3150]
-                left = self.msg.ranges[450]
+                right = self.msg.ranges[3150] #SMR200
+                left = self.msg.ranges[450]   #SMR200
+                
+                # right = self.msg.ranges[3000] #SDR100
+                # left = self.msg.ranges[600]   #SDR100
 
                 stop_max_range = 3.0
                 stop_min_range = 0.01
 
-                stop_zone_left = np.array(self.msg.ranges[0:450]) # [0:300]
+                stop_zone_left = np.array(self.msg.ranges[0:450]) #SMR200
+                # stop_zone_left = np.array(self.msg.ranges[0:300]) #SDR100
                 # print(len(stop_zone_left))
                 # print(stop_zone_left)
 
@@ -174,7 +179,8 @@ class ActionServer():
                 #print(stop_zone_left_clipped)
                 #print(np.mean(stop_zone_left_clipped))
                 
-                stop_zone_right = np.array(self.msg.ranges[3408:3585]) #[3408:3585]
+                stop_zone_right = np.array(self.msg.ranges[3408:3585]) #SMR200
+                # stop_zone_right = np.array(self.msg.ranges[3300:3600]) #SDR100
                 # print(len(stop_zone_right))
                 # print(stop_zone_right)
 
